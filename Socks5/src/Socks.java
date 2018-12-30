@@ -1,7 +1,6 @@
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.util.*;
@@ -10,7 +9,21 @@ import org.xbill.DNS.*;
 
 public class Socks {
 
-    private static final int BUFFER_SIZE = 8192;
+    private final static int BUFFER_SIZE = 8192;
+
+    private final static int VERSION = 0x05;
+    private final static int COMMANDS = 0x01;
+    private final static int COMMAND = 0x00;
+    private final static int TCPIP = 0x01;
+    private final static int RESERVED = 0x00;
+    private final static int IPV4 = 0x01;
+    private final static int DNS = 0x03;
+    private final static int SIZEGREETINGS = 2;
+    private final static int SIZECONNECTION = 10;
+    private final static int SIZEIP = 4;
+    private final static int OK = 0x00;
+    private final static int ERROR = 0x01;
+
     private int serverPort;
     private Selector selector;
     private ServerSocketChannel serverSocketChannel;
@@ -36,24 +49,33 @@ public class Socks {
         SocketChannel client, remote;
         boolean connected = false;
         boolean registred = false;
+        //boolean gotRegister = false;
+        //boolean gotConnection = false;
+        //boolean forwarded = true;
         InetAddress address = null;
         int port = 0;
+        //byte[] greetingsBuffer, connectionBuffer, clientBuffer, remoteBuffer;
 
         Client(SocketChannel channel) throws IOException {
             this.client = channel;
             client.configureBlocking(false);
+            //greetingsBuffer = new byte[SIZEGREETINGS];
+            //connectionBuffer = new byte[SIZECONNECTION];
         }
 
         void newRemoteData() throws IOException {
 
             ByteBuffer byteBuffer = ByteBuffer.allocate(BUFFER_SIZE);
-            if (remote.isConnected()) {
+            if (remote.isConnected()/* && forwarded*/) {
                 int bytes = remote.read(byteBuffer);
-                //System.out.println("Got " + bytes + " bytes from remote");
                 if (bytes > 0) {
+                    //clientBuffer = ByteBuffer.wrap(byteBuffer.array(), 0, bytes).array();
+                    //forwarded = false;
+                    //writeClient();
                     bytes = client.write(ByteBuffer.wrap(byteBuffer.array(), 0, bytes));
                     System.out.println("Forwarded " + bytes + " bytes to client");
-                } else if (bytes == -1) {
+                }
+                else if (bytes == -1) {
                     System.out.println("Removing " + client.getRemoteAddress());
 
                     client.close();
@@ -63,42 +85,40 @@ public class Socks {
             byteBuffer.clear();
         }
 
-        void newClientData(Selector selector) throws IOException {
+        void newClientData() throws IOException {
             ByteBuffer byteBuffer = ByteBuffer.allocate(BUFFER_SIZE);
-            int bytes = (client.isConnected()) ? client.read(byteBuffer) : -1;
-            //System.out.println("Got " + bytes + " bytes from client");
+            int bytes = -1;
+            if (client.isConnected())
+                bytes = client.read(byteBuffer);
             byteBuffer.flip();
 
             if (!registred) {
                 if (bytes > 0) {
 
                     int version = byteBuffer.get();
-                    if (version != 0x05) {
+                    if (version != VERSION) {
                         throw new IOException("WRONG VERSION: " + version);
                     }
-                    //System.out.println("Version: " + version);
 
                     int commands = byteBuffer.get();
-                    if (commands != 0x01) {
+                    if (commands != COMMANDS) {
                         throw new IOException("WRONG NUMBER OF COMMANDS: " + commands);
                     }
-                    //System.out.println("Number of commands: " + commands);
 
                     int command = byteBuffer.get();
-                    if (command != 0x00) {
+                    if (command != COMMAND) {
                         throw new IOException("WRONG COMMAND: " + command);
                     }
-                    //System.out.println("Command " + command);
 
-                    ByteBuffer outBuffer = ByteBuffer.allocate(2);
-                    outBuffer.put((byte) 0x05);
-                    outBuffer.put((byte) 0x00);
-                    System.out.println("Send back: " + Arrays.toString(outBuffer.array()));
-                    int len = client.write(ByteBuffer.wrap(outBuffer.array(), 0, 2));
-                    outBuffer.clear();
+                    ByteBuffer greetingsBuffer = ByteBuffer.allocate(SIZEGREETINGS);
+                    greetingsBuffer.put((byte) VERSION);
+                    greetingsBuffer.put((byte) COMMAND);
+                    client.write(ByteBuffer.wrap(greetingsBuffer.array(), 0, SIZEGREETINGS));
+                    //this.greetingsBuffer = greetingsBuffer.array();
                     System.out.println("Got greetings message");
-
                     registred = true;
+                    //gotRegister = true;
+                    //writeClient();
 
                 } else if (bytes == -1) {
                     System.out.println("Removing " + client.getRemoteAddress());
@@ -110,54 +130,46 @@ public class Socks {
                 if (!connected) {
                     if (bytes > 0) {
                         int version = byteBuffer.get();
-                        if (version != 0x05) {
+                        if (version != VERSION) {
                             throw new IOException("WRONG VERSION: " + version);
                         }
-                        //System.out.println("Version: " + version);
 
                         int command = byteBuffer.get();
-                        if (command != 0x01) {
+                        if (command != TCPIP) {
                             throw new IOException("WRONG COMMAND: " + command);
                         }
-                        //System.out.println("Command " + command);
 
                         int reserved = byteBuffer.get();
-                        if (reserved != 0x00) {
+                        if (reserved != RESERVED) {
                             throw new IOException("WRONG RESERVED BYTE: " + reserved);
                         }
-                        //System.out.println("Byte " + reserved);
 
                         int addressType = byteBuffer.get();
-                        //System.out.println("Address type: " + addressType);
 
-                        if (addressType == 0x01) {
+                        if (addressType == IPV4) {
 
-                            byte[] ip = new byte[4];
+                            byte[] ip = new byte[SIZEIP];
                             byteBuffer.get(ip);
                             address = InetAddress.getByAddress(ip);
-                            //System.out.println("Address: " + address);
 
-                        } else if (addressType == 0x03) {
+                        } else if (addressType == DNS) {
 
                             int len = byteBuffer.get();
                             byte[] byteName = new byte[len];
                             byteBuffer.get(byteName);
                             System.out.println("Domain name: " + new String(byteName));
                             String stringName = new String(byteName);
-                            //address = InetAddress.getByName(new String(byteName));
                             Name name = Name.fromString(stringName, Name.root);
                             Record record = Record.newRecord(name, Type.A, DClass.IN);
                             Message message = Message.newQuery(record);
-                            len = dnsChannel.write(ByteBuffer.wrap(message.toWire()));
+                            dnsChannel.write(ByteBuffer.wrap(message.toWire()));
                             dns.put(message.getHeader().getID(), this);
-                            //System.out.println("Wrote to dns " + len + " bytes. Size: " + dns.size());
                         } else {
                             throw new IOException("WRONG ADDRESS TYPE: " + addressType);
                         }
 
                         port = byteBuffer.getShort();
-                        //System.out.println("Port: " + port);
-                        if (addressType == 0x01)
+                        if (addressType == IPV4)
                             connect(address);
 
                     } else if (bytes == -1) {
@@ -165,10 +177,11 @@ public class Socks {
 
                         client.close();
                     }
-                    byteBuffer.clear();
                 } else {
                     if (client.isConnected()) {
                         if (bytes > 0) {
+                            //remoteBuffer = byteBuffer.array();
+                            //writeRemote();
                             bytes = remote.write(ByteBuffer.wrap(byteBuffer.array(), 0, bytes));
                             System.out.println("Forwarded " + String.valueOf(bytes) + " bytes");
                         } else if (bytes == -1) {
@@ -178,8 +191,8 @@ public class Socks {
                             remote.close();
                         }
                     }
-                    byteBuffer.clear();
                 }
+                byteBuffer.clear();
             }
         }
 
@@ -189,22 +202,22 @@ public class Socks {
             System.out.println("Address: " + this.address + ":" + port);
 
             remote = SocketChannel.open(new InetSocketAddress(this.address, port));
-            ByteBuffer outBuffer = ByteBuffer.allocate(10);
-            outBuffer.put((byte) 0x05);
+            ByteBuffer connectionBuffer = ByteBuffer.allocate(SIZECONNECTION);
+            connectionBuffer.put((byte) VERSION);
             if (remote.isConnected()) {
-                outBuffer.put((byte) 0x00);
+                connectionBuffer.put((byte) OK);
             } else {
-                outBuffer.put((byte) 0x01);
+                connectionBuffer.put((byte) ERROR);
             }
-            outBuffer.put((byte) 0x00);
-            outBuffer.put((byte) 0x01);
-            outBuffer.put(InetAddress.getLocalHost().getAddress());
-            outBuffer.putShort((short) serverPort);
-
-            System.out.println("Send back: " + Arrays.toString(outBuffer.array()));
-
-            int len = client.write(ByteBuffer.wrap(outBuffer.array(), 0, 10));
-            outBuffer.clear();
+            connectionBuffer.put((byte) RESERVED);
+            connectionBuffer.put((byte) IPV4);
+            connectionBuffer.put(InetAddress.getLocalHost().getAddress());
+            connectionBuffer.putShort((short) serverPort);
+            //this.connectionBuffer = connectionBuffer.array();
+            //gotConnection = true;
+            //writeClient();
+            client.write(ByteBuffer.wrap(connectionBuffer.array(), 0, SIZECONNECTION));
+            connectionBuffer.clear();
             if (!remote.isConnected()) {
                 System.out.println("Removing " + client.getRemoteAddress());
                 remote.close();
@@ -212,10 +225,58 @@ public class Socks {
                 return;
             }
             remote.configureBlocking(false);
-            remote.register(selector, SelectionKey.OP_READ);
+            remote.register(selector, SelectionKey.OP_READ | SelectionKey.OP_CONNECT);
             connected = true;
-
         }
+
+        /*void writeClient() throws IOException {
+            if (!registred && gotRegister) {
+                int bytes = client.write(ByteBuffer.wrap(greetingsBuffer, 0, SIZEGREETINGS));
+                if (bytes != SIZEGREETINGS) {
+                    System.out.println("Removing " + client.getRemoteAddress());
+                    client.close();
+                } else {
+                    registred = true;
+                    System.out.println("Greetings: " + Arrays.toString(greetingsBuffer));
+                }
+            } else if (registred) {
+                if (!connected && gotConnection) {
+                    int bytes = client.write(ByteBuffer.wrap(connectionBuffer, 0, SIZECONNECTION));
+                    if (bytes != SIZECONNECTION) {
+                        System.out.println("Removing " + client.getRemoteAddress());
+                        client.close();
+                    } else {
+                        connected = true;
+                        System.out.println("Connection: " + Arrays.toString(connectionBuffer));
+                    }
+                } else if (connected && clientBuffer != null){
+                    int bytes = client.write(ByteBuffer.wrap(clientBuffer, 0, clientBuffer.length));
+                    if (bytes == -1) {
+                        System.out.println("Removing " + client.getRemoteAddress());
+                        client.close();
+                    } else {
+                        while (bytes < clientBuffer.length) {
+                            bytes += client.write(ByteBuffer.wrap(clientBuffer, bytes, clientBuffer.length - bytes));
+                        }
+                        forwarded = true;
+                    }
+                }
+            }
+        }
+
+        void writeRemote() throws IOException {
+            if (remoteBuffer != null) {
+                int bytes = remote.write(ByteBuffer.wrap(remoteBuffer, 0, remoteBuffer.length));
+                if (bytes == -1) {
+                    System.out.println("Removing " + client.getRemoteAddress());
+                    client.close();
+                } else {
+                    while (bytes < remoteBuffer.length) {
+                        bytes += remote.write(ByteBuffer.wrap(remoteBuffer, bytes, remoteBuffer.length - bytes));
+                    }
+                }
+            }
+        }*/
     }
 
     private Socks(String[] args) throws IOException {
@@ -224,7 +285,13 @@ public class Socks {
             printHelp();
             getParams();
         } else {
-            serverPort = Integer.parseInt(args[0]);
+            try {
+                serverPort = Integer.parseInt(args[0]);
+                if (serverPort > 65535 || serverPort < 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                System.out.println("Wrong argument. Port will be set to 1080");
+                serverPort = 1080;
+            }
         }
 
         selector = Selector.open();
@@ -264,9 +331,36 @@ public class Socks {
                         ((SocketChannel) key.channel()).finishConnect();
                     } else if (key.isReadable()) {
                         receive(key);
-                    }
+                    } /*else if (key.isWritable()) {
+                        write(key);
+                    }*/
                 }
             }
+        }
+    }
+
+    /*private void write(SelectionKey key) throws IOException {
+
+        ArrayList<Client> onRemove = new ArrayList<>();
+        if (key.channel() instanceof SocketChannel) {
+            SocketChannel socketChannel = (SocketChannel) key.channel();
+            for (Client client : clients) {
+                if (client.client.equals(socketChannel))
+                    client.writeClient();
+                if (!client.client.isConnected()) {
+                    onRemove.add(client);
+                }
+            }
+        }
+        remove(onRemove);
+
+    }*/
+
+    private void remove(ArrayList<Client> onRemove) throws IOException {
+        for (Client cl : onRemove) {
+            if (cl.client.isConnected()) cl.client.close();
+            if (cl.remote != null && cl.remote.isConnected()) cl.remote.close();
+            clients.remove(cl);
         }
     }
 
@@ -276,17 +370,21 @@ public class Socks {
         if (key.channel() instanceof SocketChannel) {
             SocketChannel socketChannel = (SocketChannel) key.channel();
             for (Client client : clients) {
-                if (client.remote != null && client.remote.equals(socketChannel))
+                if (client.remote != null && client.remote.equals(socketChannel)) {
                     client.newRemoteData();
-                else if (client.client.equals(socketChannel))
-                    client.newClientData(selector);
+                    break;
+                }
+                else if (client.client.equals(socketChannel)) {
+                    client.newClientData();
+                    break;
+                }
                 if (!client.client.isConnected()) {
                     onRemove.add(client);
                 }
             }
         } else {
             if (key.channel().equals(dnsChannel)) {
-                ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
+                ByteBuffer buffer = ByteBuffer.allocate(256);
                 int length = dnsChannel.read(buffer);
                 if (length > 0) {
                     System.out.println("Got " + length + " bytes from dns. Size: " + dns.size());
@@ -298,23 +396,19 @@ public class Socks {
                             ARecord aRecord = (ARecord) record;
                             int id = message.getHeader().getID();
                             Client cl = dns.get(id);
-                            //System.out.println(aRecord.getAddress());
                             cl.connect(aRecord.getAddress());
                             if (!cl.client.isConnected()) {
                                 onRemove.add(cl);
                             }
                             dns.remove(id);
+                            break;
                         }
                     }
                     buffer.clear();
                 }
             }
         }
-        for (Client cl : onRemove) {
-            if (cl.client.isConnected()) cl.client.close();
-            if (cl.remote != null && cl.remote.isConnected()) cl.remote.close();
-            clients.remove(cl);
-        }
+        remove(onRemove);
     }
 
     private void register() throws IOException {
@@ -330,9 +424,15 @@ public class Socks {
 
     private void getParams() {
 
-        System.out.println("Write serverPort:");
         Scanner scanner = new Scanner(System.in);
-        serverPort = Integer.parseInt(scanner.nextLine());
+        try {
+            do {
+                System.out.println("Write serverPort:");
+            } while ((serverPort = Integer.parseInt(scanner.nextLine())) > 65535 || serverPort < 0);
+        } catch (NumberFormatException ex) {
+            System.out.println("Wrong argument. Port will be set to 1080");
+            serverPort = 1080;
+        }
         scanner.close();
     }
 
