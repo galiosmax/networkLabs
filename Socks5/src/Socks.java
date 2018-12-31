@@ -29,7 +29,8 @@ public class Socks {
     private ServerSocketChannel serverSocketChannel;
     private DatagramChannel dnsChannel;
     private boolean isRunning;
-    private ArrayList<Client> clients = new ArrayList<>();
+    private HashMap<SocketChannel, Client> clients = new HashMap<>();
+    private HashMap<SocketChannel, Client> remotes = new HashMap<>();
     private HashMap<Integer, Client> dns = new HashMap<>();
 
     public static void main(String[] args) {
@@ -216,7 +217,9 @@ public class Socks {
             //this.connectionBuffer = connectionBuffer.array();
             //gotConnection = true;
             //writeClient();
-            client.write(ByteBuffer.wrap(connectionBuffer.array(), 0, SIZECONNECTION));
+            if (client.isConnected()) {
+                client.write(ByteBuffer.wrap(connectionBuffer.array(), 0, SIZECONNECTION));
+            }
             connectionBuffer.clear();
             if (!remote.isConnected()) {
                 System.out.println("Removing " + client.getRemoteAddress());
@@ -226,6 +229,7 @@ public class Socks {
             }
             remote.configureBlocking(false);
             remote.register(selector, SelectionKey.OP_READ | SelectionKey.OP_CONNECT);
+            remotes.put(remote, this);
             connected = true;
         }
 
@@ -304,8 +308,8 @@ public class Socks {
         String[] dnsServers = ResolverConfig.getCurrentConfig().servers();
         dnsChannel = DatagramChannel.open();
         dnsChannel.configureBlocking(false);
-        if (dnsServers.length != 0) {
-            dnsChannel.connect(new InetSocketAddress(dnsServers[0], 53));
+        if (dnsServers.length > 1) {
+            dnsChannel.connect(new InetSocketAddress(dnsServers[1], 53));
         } else {
             dnsChannel.connect(new InetSocketAddress("8.8.8.8", 53));
         }
@@ -360,7 +364,8 @@ public class Socks {
         for (Client cl : onRemove) {
             if (cl.client.isConnected()) cl.client.close();
             if (cl.remote != null && cl.remote.isConnected()) cl.remote.close();
-            clients.remove(cl);
+            clients.remove(cl.client);
+            remotes.remove(cl.remote);
         }
     }
 
@@ -369,27 +374,25 @@ public class Socks {
         ArrayList<Client> onRemove = new ArrayList<>();
         if (key.channel() instanceof SocketChannel) {
             SocketChannel socketChannel = (SocketChannel) key.channel();
-            for (Client client : clients) {
-                if (client.remote != null && client.remote.equals(socketChannel)) {
+            Client client = clients.getOrDefault(socketChannel, null);
+            if (client == null) {
+                client = remotes.getOrDefault(socketChannel, null);
+                if (client != null) {
                     client.newRemoteData();
-                    break;
                 }
-                else if (client.client.equals(socketChannel)) {
-                    client.newClientData();
-                    break;
-                }
-                if (!client.client.isConnected()) {
-                    onRemove.add(client);
-                }
+            } else {
+                client.newClientData();
             }
+
         } else {
             if (key.channel().equals(dnsChannel)) {
-                ByteBuffer buffer = ByteBuffer.allocate(256);
+                ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
                 int length = dnsChannel.read(buffer);
                 if (length > 0) {
                     System.out.println("Got " + length + " bytes from dns. Size: " + dns.size());
                     Message message = new Message(buffer.array());
                     Record[] records = message.getSectionArray(1);
+
                     for (Record record : records) {
                         if (record instanceof ARecord) {
 
@@ -416,7 +419,7 @@ public class Socks {
         SocketChannel socketChannel = serverSocketChannel.accept();
         if (socketChannel != null) {
             Client client = new Client(socketChannel);
-            clients.add(client);
+            clients.put(socketChannel, client);
             socketChannel.register(selector, SelectionKey.OP_READ);
             System.out.println("Connection accepted: " + socketChannel.getRemoteAddress());
         }
