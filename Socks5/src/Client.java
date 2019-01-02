@@ -45,7 +45,7 @@ class Client {
                 int bytes = remote.read(byteBuffer);
                 if (bytes > 0) {
                     bytes = client.write(ByteBuffer.wrap(byteBuffer.array(), 0, bytes));
-                    System.out.println("Forwarded " + bytes + " bytes to client");
+                    //System.out.println("Forwarded " + bytes + " bytes to client");
                 } else if (bytes == -1) {
                     throw new IOException("Removing " + client.getRemoteAddress());
                 }
@@ -92,7 +92,7 @@ class Client {
                     greetingsBuffer.put((byte) COMMAND);
                     client.write(ByteBuffer.wrap(greetingsBuffer.array(), 0, SIZEGREETINGS));
                     greetingsBuffer.clear();
-                    System.out.println("Got greetings message");
+                    //System.out.println("Got greetings message");
                     registred = true;
 
                 } else if (bytes == -1) {
@@ -129,7 +129,7 @@ class Client {
                             int len = byteBuffer.get();
                             byte[] byteName = new byte[len];
                             byteBuffer.get(byteName);
-                            System.out.println("Domain name: " + new String(byteName));
+                            //System.out.println("Domain name: " + new String(byteName));
                             String stringName = new String(byteName);
                             Name name = Name.fromString(stringName, Name.root);
                             Record record = Record.newRecord(name, Type.A, DClass.IN);
@@ -151,7 +151,7 @@ class Client {
                     if (client.isConnected()) {
                         if (bytes > 0) {
                             bytes = remote.write(ByteBuffer.wrap(byteBuffer.array(), 0, bytes));
-                            System.out.println("Forwarded " + String.valueOf(bytes) + " bytes");
+                            //System.out.println("Forwarded " + String.valueOf(bytes) + " bytes");
                         } else if (bytes == -1) {
                             throw new IOException("Removing " + client.getRemoteAddress());
                         }
@@ -174,7 +174,7 @@ class Client {
         try {
             if (client.isConnected()) {
                 this.address = address;
-                System.out.println("Address: " + this.address + ":" + port);
+                //System.out.println("Address: " + this.address + ":" + port);
 
                 remote = SocketChannel.open(new InetSocketAddress(this.address, port));
                 ByteBuffer connectionBuffer = ByteBuffer.allocate(SIZECONNECTION);
@@ -193,10 +193,7 @@ class Client {
                 connectionBuffer.clear();
 
                 if (!remote.isConnected()) {
-                    System.out.println("Removing " + client.getRemoteAddress());
-                    remote.close();
-                    client.close();
-                    return;
+                    throw new IOException("Removing " + client.getRemoteAddress());
                 }
                 remote.configureBlocking(false);
                 remote.register(Socks.selector, SelectionKey.OP_READ | SelectionKey.OP_CONNECT);

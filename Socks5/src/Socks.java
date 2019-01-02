@@ -139,7 +139,7 @@ public class Socks {
                     ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
                     int length = dnsChannel.read(buffer);
                     if (length > 0) {
-                        System.out.println("Got " + length + " bytes from dns. Size: " + dns.size());
+                        //System.out.println("Got " + length + " bytes from dns. Size: " + dns.size());
                         Message message = new Message(buffer.array());
                         Record[] records = message.getSectionArray(1);
 
@@ -149,13 +149,11 @@ public class Socks {
                                 ARecord aRecord = (ARecord) record;
                                 int id = message.getHeader().getID();
                                 Client cl = dns.get(id);
-                                try {
+                                if (cl != null && aRecord.getAddress() != null) {
                                     cl.connect(aRecord.getAddress());
                                     if (!cl.client.isConnected()) {
                                         onRemove.add(cl);
                                     }
-                                } catch (NullPointerException e) {
-                                    System.out.println("Exception: address " + aRecord.getAddress());
                                 }
                                 dns.remove(id);
                                 break;
@@ -178,7 +176,7 @@ public class Socks {
                 Client client = new Client(socketChannel);
                 clients.put(socketChannel, client);
                 socketChannel.register(selector, SelectionKey.OP_READ);
-                System.out.println("Connection accepted: " + socketChannel.getRemoteAddress());
+                //System.out.println("Connection accepted: " + socketChannel.getRemoteAddress());
             }
         } catch (IOException e) {
             System.out.println(e.getMessage());
@@ -200,9 +198,7 @@ public class Socks {
     }
 
     private void printHelp() {
-
         System.out.println("Usage: java -jar Socks.jar [serverPort]");
         System.out.println("serverPort  Port where server is waiting on");
-
     }
 }
